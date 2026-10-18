@@ -1,0 +1,17 @@
+# Build context for the honeypot images (containers/honeypot/Containerfile): only what
+# pip installs. No venv, no git, no gate results, no tests or docs.
+.git
+.venv
+out
+tests
+docs
+ci
+containers
+.pre-commit-config.yaml
+.env
+.env.*
+**/__pycache__
+**/*.pyc
+
+.creds*
+.nouresearch
