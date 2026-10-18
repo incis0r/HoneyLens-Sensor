@@ -1,0 +1,71 @@
+# ═══════════════════════════════════════════════════════════
+# HoneyLens Sensor 1.0 — Python dependencies (carried over from 0.9, 2026-09-17)
+# ═══════════════════════════════════════════════════════════
+# Install: pip install -r requirements.txt
+# Platform: Python 3.12 (AppStream) on Rocky Linux 9 / RHEL 9
+# Lock: make lock (pip-compile in a Rocky 9 container — see ci/lock.Containerfile)
+
+# ── Core ──────────────────────────────────────────────────
+scapy>=2.5.0                    # Packet crafting/parsing
+psycopg2-binary>=2.9.0          # PostgreSQL driver
+fastapi>=0.100.0                # REST API framework
+uvicorn[standard]>=0.20.0       # ASGI server
+python-multipart>=0.0.6         # Form parsing (login page)
+
+# ── HTTP Clients ──────────────────────────────────────────
+requests>=2.31.0                # Sync HTTP (blog, OSINT, Ollama)
+httpx>=0.25.0                   # Async HTTP (AI analyzer)
+aiohttp>=3.14.4                 # Async HTTP for OSINT providers — AND the server behind every
+                                # web decoy, which is why the floor is this specific. 3.14.4 fixes
+                                # three advisories that all land on an internet-exposed listener:
+                                # GHSA-2g87-pp6c-29x5 (HIGH) unbounded memory/CPU;
+                                # CVE-2026-111064 (HIGH) no timeout on the first request line or
+                                # headers, so an idle half-open client holds a worker; and
+                                # CVE-2026-111063 (LOW) `Secure` not enforced on a shared cookie.
+                                # The first two are the honeypot's own threat model: we invite the
+                                # traffic that triggers them.
+
+# ── Security ──────────────────────────────────────────────
+cryptography>=41.0.0            # TLS cert gen + credential vault
+argon2-cffi>=21.3.0             # Argon2id password hashing
+ldap3>=2.9                      # optional LDAP/AD authentication backend (auth/ldap_auth.py)
+
+# ── AI (Optional) ────────────────────────────────────────
+anthropic>=0.39.0               # Claude SDK
+
+# ── GeoIP (Optional) ─────────────────────────────────────
+geoip2>=4.7.0                   # MaxMind GeoLite2
+
+# ── Honeypots ────────────────────────────────────────────
+flask>=2.3.0                    # Web honeypot listener
+asyncssh>=2.14.0                # PAN-OS SSH honeypot (honeypot_paloalto_ssh.py)
+
+# ── eBPF (userspace) ──────────────────────────────────────
+# BCC is not on PyPI — the bcc module is symlinked from python3-bcc (RPM) into the venv, see the 1.0 plan, Phase 2a.
+pyroute2>=0.7.12                # ebpf_ttl_loader.py: attaching the program to TC egress; 0.9 took
+                                # it from the RPM python3-pyroute2 for 3.9, in the 3.12 venv it must come from PyPI
+
+# ── Data ──────────────────────────────────────────────────
+zstandard>=0.22.0               # PCAP compression
+defusedxml>=0.7.1   # ttl_profiler.py: parse Nmap XML safely (CVE-class XXE protection)
+
+# ── Security floors on TRANSITIVE dependencies ────────────
+# Nothing here is imported by us directly — these are pulled in by flask/aiohttp and would
+# otherwise resolve to whatever the top-level pin allows. A floor keeps the fix in the lock
+# and stops a later `make lock` from quietly walking back to an affected build.
+certifi>=2026.10.19             # via requests/httpx. PYSEC-2026-4320: the 2026.07.22 bundle
+                                # still trusts a root that has since been withdrawn. Every outbound
+                                # TLS call we make — OSINT providers, AI backends, the blog
+                                # publisher — validates against this bundle, so a stale one is a
+                                # trust problem and not a packaging detail.
+multidict>=6.9.1                # via aiohttp/yarl. CVE-2026-104874 (GHSA-54p9-h82j-f925,
+                                # MODERATE, CWE-401): reference leak in the MultiDict/CIMultiDict
+                                # items-view `|` and `-` operators, 6.7.0–6.9.0. The views are
+                                # built over attacker-controlled headers and query strings in the
+                                # aio-libs stack, so a remote client can drive unreclaimable
+                                # memory growth — relevant to every aiohttp web decoy.
+werkzeug>=3.1.9                 # via flask. CVE-2026-102598 (GHSA-g6x2-hccm-hh4m, MODERATE,
+                                # CWE-67): `safe_join()` still accepts Windows special device
+                                # names when they carry an empty ADS marker (`NUL:`), so
+                                # `send_from_directory` hangs on NTFS. Not reachable on our Linux
+                                # sensors; bumped to keep the lock clean, not as an incident.

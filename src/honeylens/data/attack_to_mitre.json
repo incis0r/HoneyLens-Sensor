@@ -1,0 +1,90 @@
+{
+  "_documentation": "Mapping from HoneyLens attack_classifier patterns to MITRE ATT&CK technique IDs. Categories are documentation only — they don't affect lookup. Operators can edit this file without touching Python; intelligence/apt_attribution.py reloads it at module import. See https://attack.mitre.org/techniques/enterprise/ for technique reference.",
+  "brute_force": {
+    "ssh_brute":        ["T1110.001", "T1110.003"],
+    "ssh_auth_fail":    ["T1110.001"],
+    "ftp_brute":        ["T1110.001"],
+    "telnet_brute":     ["T1110.001"],
+    "mysql_brute":      ["T1110.001"],
+    "rdp_brute":        ["T1110.001", "T1110.003"],
+    "vnc_brute":        ["T1110.001"],
+    "smtp_brute":       ["T1110.001"],
+    "ldap_brute":       ["T1110.001"],
+    "postgres_brute":   ["T1110.001"],
+    "default_creds":    ["T1078.001"]
+  },
+  "web_exploitation": {
+    "sqli":             ["T1190"],
+    "xss":              ["T1189"],
+    "lfi":              ["T1190"],
+    "rfi":              ["T1190"],
+    "rce":              ["T1190", "T1059"],
+    "cmd_injection":    ["T1059.004"],
+    "path_traversal":   ["T1083"],
+    "ssrf":             ["T1190"],
+    "xxe":              ["T1190"],
+    "deserialization":  ["T1190"],
+    "template_inject":  ["T1190", "T1059"],
+    "log4shell":        ["T1190", "T1203"],
+    "cgi_exploit":      ["T1190"]
+  },
+  "recon": {
+    "port_scan":        ["T1595.001", "T1046"],
+    "service_enum":     ["T1046"],
+    "banner_grab":      ["T1046"],
+    "dir_traversal":    ["T1595.003"],
+    "web_scanner":      ["T1595.002"],
+    "vuln_scan":        ["T1595.002"]
+  },
+  "credential_theft": {
+    "ntlm_capture":     ["T1557.001", "T1187"],
+    "kerberoast":       ["T1558.003"],
+    "credential_dump":  ["T1003"]
+  },
+  "ics_ot": {
+    "modbus_scan":      ["T0846"],
+    "modbus_write":     ["T0855"],
+    "s7comm_scan":      ["T0846"],
+    "bacnet_scan":      ["T0846"],
+    "iec104_scan":      ["T0846"],
+    "dnp3_scan":        ["T0846"]
+  },
+  "lateral_movement": {
+    "smb_exploit":      ["T1210", "T1021.002"],
+    "psexec":           ["T1021.002", "T1569.002"],
+    "wmi_exec":         ["T1047"],
+    "lateral_move":     ["T1021"]
+  },
+  "c2_exfil": {
+    "reverse_shell":    ["T1059", "T1071.001"],
+    "beacon":           ["T1071.001", "T1095"],
+    "dns_tunnel":       ["T1572", "T1071.004"],
+    "dns_exfil":        ["T1048.001"],
+    "http_exfil":       ["T1048.002"],
+    "icmp_tunnel":      ["T1572"]
+  },
+  "crypto_ransomware": {
+    "crypto_mining":    ["T1496"],
+    "stratum_connect":  ["T1496"],
+    "xmrig":            ["T1496"],
+    "ransomware":       ["T1486"]
+  },
+  "email": {
+    "smtp_relay":       ["T1566"],
+    "phishing":         ["T1566.001"],
+    "mass_mail":        ["T1566"]
+  },
+  "malware_botnet": {
+    "mirai_scan":       ["T1595.001", "T1078"],
+    "mirai_payload":    ["T1059.004"],
+    "botnet_c2":        ["T1071.001", "T1583.001"],
+    "malware_download": ["T1105"]
+  },
+  "cve_generic": {
+    "cve_exploit":      ["T1190", "T1203"]
+  },
+  "proxy_anonymization": {
+    "vpn_proxy":        ["T1090"],
+    "tor_exit":         ["T1090.003"]
+  }
+}
