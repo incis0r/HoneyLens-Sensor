@@ -1,0 +1,24 @@
+[Unit]
+# The PAN-OS decoy (HTTPS management, captive portal and SSH) writes its events to two
+# JSON files; this moves them into sensor_events. Shipped here rather than hand-written
+# per host, because hand-written units drift: a missing unit, or one whose timer was never
+# enabled, both present the same symptom — a live decoy with no events in the database and
+# no error anywhere to find.
+#
+# PALOALTO_LOG_FILE and PALOALTO_SSH_LOG_FILE must point at the HOST side of the decoy's
+# log mount; unset, the ingest reads /var/log/honeypot_paloalto*.json, reports
+# "0 processed" and exits successfully.
+Description=HoneyLens ingest: PAN-OS decoy events into the database
+After=network-online.target honeylens-db.service
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+WorkingDirectory=%h/sensor-1.0
+Environment=HONEYLENS_ENV_FILE=%h/honeylens-state/.env
+Environment=INGEST_STATE_DIR=%h/honeylens-state/ingest
+Environment=PYTHONUNBUFFERED=1
+ExecStart=%h/sensor-1.0/.venv/bin/honeylens-ingest-paloalto
+UMask=0077
+
+# Driven by honeylens-ingest-paloalto.timer.

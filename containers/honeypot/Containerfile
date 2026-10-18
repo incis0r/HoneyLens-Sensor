@@ -1,0 +1,68 @@
+# HoneyLens honeypot image — one Containerfile, one image per honeypot (ARG HONEYPOT).
+#
+#   podman build -f containers/honeypot/Containerfile --build-arg HONEYPOT=modbus \
+#          -t localhost/honeylens/hp-modbus:latest .
+#
+# The same base as the dependency lock (ci/lock.Containerfile): Rocky Linux 9, Python 3.12
+# from AppStream. The package is installed from the tree constrained to requirements.txt, so the
+# image contains exactly the versions that passed pip-audit in Phase 1.
+#
+# The image contains NO: credentials, .env, certificates, serial numbers. The identity
+# is created on first start in a volume (see honeylens.honeypots.manifest).
+# The process is the user `honeylens` (uid 1000), not root — also inside the container's
+# namespace. A protocol port < 1024 the honeypot binds as 30000+port (manifest), so it
+# needs neither privileges nor a sysctl; the host does DNAT. The quadlet mounts volumes with
+# `UserNS=keep-id:uid=1000`, so uid 1000 in the container is the user's uid on the host.
+FROM quay.io/rockylinux/rockylinux:9
+
+# ARG HONEYPOT is declared only AFTER the dnf and pip layers: every RUN layer after
+# the ARG declaration has the argument's value in its cache key, so with ARG at the top 41 images
+# means 41 dependency installations instead of one shared layer.
+
+# dnf update: the rockylinux:9 base image is a release snapshot; without updating, trivy
+# sees dozens of already-fixed CVEs in it (measured: 72 HIGH/CRITICAL before).
+# openssl: the monolith and the K8s honeypot generate their own certificate
+# with the openssl command (as in 0.9).
+RUN dnf -y update \
+    && dnf -y install python3.12 python3.12-pip openssl \
+    && dnf clean all \
+    && rm -rf /var/cache/dnf
+
+WORKDIR /build
+COPY pyproject.toml requirements.txt README.md ./
+COPY src ./src
+RUN python3.12 -m venv /opt/honeylens/venv \
+    && /opt/honeylens/venv/bin/pip install --no-cache-dir --upgrade pip \
+    && /opt/honeylens/venv/bin/pip install --no-cache-dir -c requirements.txt . \
+    && /opt/honeylens/venv/bin/pip uninstall -y pip setuptools \
+    && rm -rf /build
+
+ENV PATH="/opt/honeylens/venv/bin:$PATH" \
+    PYTHONUNBUFFERED=1 \
+    TZ=UTC
+
+ARG HONEYPOT
+RUN test -n "$HONEYPOT" || (echo "build-arg HONEYPOT is required" && exit 1)
+ENV HONEYPOT=${HONEYPOT}
+
+# The runtime image installs no packages: pip disappears from the venv and from the system. Beyond
+# the attack surface this is about the scan — trivy sees msgpack and pkg_resources vendored inside pip
+# (setuptools 70.3.0, CVE-2025-47273) and reports them as image vulnerabilities.
+RUN dnf -y remove python3.12-pip python3.12-setuptools \
+    && dnf clean all \
+    && useradd --uid 1000 --user-group --no-create-home --home-dir /var/lib/honeylens --shell /sbin/nologin honeylens \
+    && mkdir -p /opt/logs/honeypotng /opt/logs/honeyweb /opt/logs/vendor /var/lib/honeylens/identity \
+    && chown -R honeylens:honeylens /opt/logs /var/lib/honeylens \
+    && honeylens-hp --list | grep -qE "^${HONEYPOT} " || (echo "unknown honeypot ${HONEYPOT}" && exit 1)
+
+LABEL org.opencontainers.image.title="HoneyLens honeypot ${HONEYPOT}" \
+      org.opencontainers.image.source="https://github.com/incis0r/HoneyLens-Sensor"
+
+# The honeypot is PID 1 (exec below). Python without a handler ignores SIGTERM, so `podman stop`
+# waited 10 s and finished it off with SIGKILL; on SIGINT the interpreter raises KeyboardInterrupt, which
+# every honeypot handles as a clean shutdown (measured on Rocky 9).
+STOPSIGNAL SIGINT
+VOLUME ["/opt/logs", "/var/lib/honeylens/identity"]
+USER honeylens
+WORKDIR /var/lib/honeylens
+ENTRYPOINT ["/bin/sh", "-c", "exec honeylens-hp \"$HONEYPOT\""]
