@@ -1,0 +1,24 @@
+[Unit]
+# The FortiGate decoy writes its events to a JSON file; this moves them into
+# sensor_events. Without it the decoy still runs and still logs, and nothing in the
+# dashboard ever shows a FortiGate event — a failure with no error anywhere. A sensor
+# deployed without this unit accumulates its events on disk indefinitely and reports zero
+# FortiGate rows in the database.
+#
+# FORTIGATE_LOG_FILE must point at the HOST side of the decoy's log mount. The quadlet
+# gives the container its own path under /opt/logs; this runs on the host and sees none
+# of that, so unset it reads /var/log/honeypot_fortigate.json and finds nothing.
+Description=HoneyLens ingest: FortiGate decoy events into the database
+After=network-online.target honeylens-db.service
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+WorkingDirectory=%h/sensor-1.0
+Environment=HONEYLENS_ENV_FILE=%h/honeylens-state/.env
+Environment=INGEST_STATE_DIR=%h/honeylens-state/ingest
+Environment=PYTHONUNBUFFERED=1
+ExecStart=%h/sensor-1.0/.venv/bin/honeylens-ingest-fortigate
+UMask=0077
+
+# Driven by honeylens-ingest-fortigate.timer.

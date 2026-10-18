@@ -1,0 +1,50 @@
+# Secrets — NEVER into git
+.env
+.env.*
+.env-*
+!.env.example
+.creds*
+.nouresearch*
+*.key
+*.pem
+*.token
+*.p12
+*.pfx
+
+# macOS
+.DS_Store
+**/.DS_Store
+
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+*.egg-info/
+
+# Build and artifacts
+build/
+dist/
+*.log
+*.pcap
+
+# Security scan results
+out/
+*.sarif
+.ruff_cache/
+.mypy_cache/
+.pytest_cache/
+
+# Measured NetScaler/StoreFront capture corpus — kept local only (contains third-party
+# appliance captures, incl. an employer StoreFront page); not for the public repo.
+tests/data/netscaler_corpus/
+
+# Measured SharePoint capture corpus (B11) — kept local only: holds a real on-prem box's
+# responses and a deployment's unique identifiers. Captured with scripts/sharepoint_capture_corpus.py.
+tests/data/sharepoint_corpus/
+
+# NetScaler decoy per-deployment Gateway hostname — generated on-host next to the cert
+ns_hostname
+
+# Local planning scratchpad; never published.
+docs/todo.txt

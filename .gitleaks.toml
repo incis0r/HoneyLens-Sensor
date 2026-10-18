@@ -1,0 +1,57 @@
+# gitleaks — secrets do not enter the repository.
+#
+# Carried over from 0.9 and narrowed. The 0.9 rule excluded whole directories, which is convenient
+# but blunt: `docs/.*` on the allowlist means a real secret pasted into documentation
+# passes without a word. Here the exclusions are pinpointed and each one has a reason.
+#
+# Deliberate decoys (fake credentials served to the attacker as bait) are part of the
+# product, not a leak — but we exclude specific files, not the whole honeypot tree.
+[extend]
+useDefault = true
+
+[allowlist]
+description = "HoneyLens 1.0 — reviewed exceptions"
+paths = [
+  # List of expected variables, always without values.
+  '''\.env\.example$''',
+  # Detection signatures: these are attack patterns, not our secrets.
+  '''^src/honeylens/data/attack_rule_definitions\.csv$''',
+]
+# Placeholders in documentation are allowed by content, not by path — a secret pasted
+# into docs/ will still be caught.
+regexes = [
+  '''YOUR_(PASSWORD|PASS|TOKEN|KEY|SECRET)''',
+  # Synthetic Slack token from the slack_api_token rule test (tests/test_new_signatures_aug_review.py):
+  # consecutive digits and 24 times "a" — it cannot be used, and the test must hit the real format.
+  #
+  # Written with the `b` as a character class on purpose. Trivy's secret scanner also runs over
+  # this repository, it does not read this allowlist, and its slack-access-token rule needs only
+  # `xoxb-` plus ten-odd token characters — so spelling the prefix out here made the allowlist
+  # entry itself a HIGH finding. Breaking just that one letter is enough to stop the match, and
+  # the digits stay exact so this exempts one fixture rather than every xoxb token with
+  # thirteen-digit ids. Do not "tidy" it back into a plain literal.
+  '''xox[b]-1234567890123-1234567890123-''',
+  '''<[a-z_]*(password|token|secret|key)>''',
+  # Honeypot bait (layer 5) — made-up credentials served to the attacker as a
+  # honeytoken; each literal listed individually, not a file and not a directory:
+  # - K8s: fake service-account token in the /api/v1/secrets response (honeypot_k8s.py)
+  '''ZXlKaGJHY2lPaUpTVXpJMU5pSXNJblI1Y0NJNklrcFhWQ0o5''',
+  # - LLM: the "leaking" secret in the assistant's system prompt (honeypot_llm.py)
+  '''NEXOVA_INTERNAL_JWT_SECRET=xK9mW2pL7qR4vT8n''',
+  # - K8s: fake JWT/secret in the honeypot's API response (honeypot_k8s.py)
+  '''eyJhbGciOiJSUzI1NiIsInR5cCI6IkpXVCJ9''',
+  # - PAN-OS tester: made-up API key in the probe header (verify_paloalto_honeypot.py)
+  '''stolen_api_key_12345''',
+  # - body_capture test: key in the POST body that the honeypot must keep verbatim
+  '''sk-proj-9f8a7b6c5d4e''',
+  '''(?i)example\.com''',
+  # Captured StoreFront corpus (tests/data/netscaler_corpus/workspace_cloud/storeweb.html): the
+  # `authDomain` identifier rendered into the public workspace page. It is a tenant routing
+  # id visible to anyone loading the page, not a credential; generic-api-key flags it on the
+  # `...domain="<base64-ish>"` shape. Allowed as a literal, not by file path.
+  '''paRLtelcPUuzqRMeBw0Lfg''',
+  # Threat-review prose: the exploit-kit name
+  # "ThinkPHP/pearcmd" sits next to the word "secret" in an older commit, so generic-api-key
+  # reads it as a key value. It is an attacker tool name in a report, not our secret.
+  '''ThinkPHP/pearcmd''',
+]
