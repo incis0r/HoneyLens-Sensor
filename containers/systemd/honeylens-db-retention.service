@@ -1,0 +1,30 @@
+[Unit]
+Description=HoneyLens event retention (archive 30 days, drop archives past 30 days)
+After=network-online.target honeylens-db.service
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+WorkingDirectory=%h/sensor-1.0
+Environment=HONEYLENS_ENV_FILE=%h/honeylens-state/.env
+Environment=PYTHONUNBUFFERED=1
+# Both numbers are written here rather than taken from DB_ARCHIVE_DAYS in `.env`,
+# deliberately: this is the unit that deletes evidence, so what it deletes has to be
+# readable in the unit itself. A host that wants a different window gets a drop-in
+# (`systemctl --user edit honeylens-db-retention.service`), which is visible in
+# `systemctl cat` — unlike a number in an env file nobody re-reads.
+#
+# --days 30         move events older than 30 days out of sensor_events into
+#                   archive_events_YYYY_MM, in the same database
+# --retention-days 30
+#                   then DROP any archive partition whose whole month is older than
+#                   30 days. This is the step that actually returns disk to the OS;
+#                   without it the data is only moved and the database still grows
+#                   without bound.
+#
+# Note the granularity: partitions are monthly, so a partition is dropped only once
+# its LAST day is past the window. Data therefore lives 30 to 61 days, not exactly 30.
+ExecStart=%h/sensor-1.0/.venv/bin/honeylens-db-archive --days 30 --retention-days 30
+UMask=0077
+
+# Driven by honeylens-db-retention.timer.

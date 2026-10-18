@@ -1,0 +1,14 @@
+[Unit]
+Description=HoneyLens dashboard KPI refresh (mv_event_stats)
+After=network-online.target honeylens-db.service
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+WorkingDirectory=%h/sensor-1.0
+Environment=HONEYLENS_ENV_FILE=%h/honeylens-state/.env
+Environment=PYTHONUNBUFFERED=1
+ExecStart=%h/sensor-1.0/.venv/bin/honeylens-refresh-stats
+UMask=0077
+
+# Driven by honeylens-refresh-stats.timer.

@@ -1,0 +1,60 @@
+# HoneyLens — AI prompt-injection canary callbacks (Idea 52)
+# Created 2026-08-13. HoneyLens local-SID block 9026740-9026749. Alert-only
+# (HoneyLens sensors run IDS, not inline IPS).
+#
+# The honeypots plant a benign instruction in credential-like responses — a Secret
+# read, an issued API key, a granted admin session, a kubeconfig. An AI agent that
+# obeys it fetches https://<sensor>/canary/ai/<nonce>. The honeypot that owns that
+# port records the hit itself, so why detect it on the wire as well?
+#
+#   * Coverage the honeypot cannot give: an agent that resolves the URL but aims it
+#     at a port with no canary sink (a scanner's own proxy, a different service on
+#     the sensor, a mistyped port) leaves no application log at all. The IDS sees it.
+#   * Independent corroboration: the callback is the single fact this whole feature
+#     rests on, and it should not be attested only by the process that also issued
+#     the canary.
+#
+# Nonce shape is 12 lowercase hex (intelligence/ai_canary._NONCE_RE); accepting 8+
+# keeps the rules working if the length is ever tuned.
+
+# 1. The expected case: an agent obeys the instruction exactly as written.
+#    Low severity on its own — this is a measurement, not an intrusion. Its value is
+#    in the correlation the sensor builds around it (AI_ASSISTED_AUTOMATION tagging).
+alert http $EXTERNAL_NET any -> $HOME_NET any ( \
+    msg:"HONEYLENS AI canary callback — automated agent obeyed a planted instruction"; \
+    flow:to_server,established; \
+    http.method; content:"GET"; \
+    http.uri; content:"/canary/ai/"; startswith; \
+    pcre:"/^\/canary\/ai\/[a-f0-9]{8,}$/"; \
+    classtype:policy-violation; \
+    metadata:author HoneyLens, created_at 2026_08_13, idea IDEA_52, \
+             attack_type AI_AGENT_CALLBACK; \
+    sid:9026740; rev:1;)
+
+# 2. The instruction says GET, and says not to send credential material. An agent
+#    that POSTs a body to the canary is doing neither — it is submitting data it was
+#    told to withhold, which is a materially different (and worse) behaviour than a
+#    plain callback, so it earns its own signature rather than a shared one.
+alert http $EXTERNAL_NET any -> $HOME_NET any ( \
+    msg:"HONEYLENS AI canary callback with body — agent submitted data despite the do-not-send instruction"; \
+    flow:to_server,established; \
+    http.method; pcre:"/^(POST|PUT|PATCH)$/"; \
+    http.uri; content:"/canary/ai/"; startswith; \
+    http.request_body; content:!"|00|"; \
+    classtype:policy-violation; \
+    metadata:author HoneyLens, created_at 2026_08_13, idea IDEA_52, \
+             attack_type AI_AGENT_CALLBACK; \
+    sid:9026741; rev:1;)
+
+# 3. Our own canary header arriving *inbound*. Nothing legitimate replays a
+#    honeypot's response header back at the sensor: it means honeypot output is
+#    being mirrored, proxied or forwarded by tooling in the middle — worth knowing,
+#    and invisible to every honeypot because it is not addressed to the canary path.
+alert http $EXTERNAL_NET any -> $HOME_NET any ( \
+    msg:"HONEYLENS AI canary instruction replayed inbound — honeypot output is being mirrored"; \
+    flow:to_server,established; \
+    http.header_names; content:"X-HoneyLens-AI-Canary"; nocase; \
+    classtype:policy-violation; \
+    metadata:author HoneyLens, created_at 2026_08_13, idea IDEA_52, \
+             attack_type AI_AGENT_CALLBACK; \
+    sid:9026742; rev:1;)

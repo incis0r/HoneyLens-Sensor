@@ -1,0 +1,12 @@
+[Unit]
+Description=Run the HoneyLens event retention nightly at 03:30
+
+[Timer]
+# After the 01:00 reclassification backfill, so retention never races a job that is
+# rewriting the rows it is about to move.
+OnCalendar=*-*-* 03:30:00
+Persistent=true
+RandomizedDelaySec=600
+
+[Install]
+WantedBy=timers.target

@@ -1,0 +1,32 @@
+-- 0015_attack_patterns_rule_name -- make a rule_name lookup indexable.
+--
+-- The honeypot read API resolves a caller's `attack` or `cve` term to an exact set of
+-- labels and then asks `attack_patterns` which events carry them. `attack_type` already
+-- had `(attack_type, created_at DESC)`; `rule_name` had no index of its own, only its
+-- third position in `(event_id, attack_type, rule_name)`, which a rule_name-only lookup
+-- cannot use.
+--
+-- Measured on a 13.1M-row attack_patterns (2026-11-07):
+--   attack_type = ANY(...)   0.01 s  (uses the existing index)
+--   rule_name   = ANY(...)   0.59 s  (sequential scan, without this index)
+-- The substring search this replaced did not finish inside 45 s.
+--
+-- CONCURRENTLY, because of how this is applied. `migrate.apply` runs in autocommit (so
+-- CONCURRENTLY is legal here) and sets `lock_timeout = 3000ms`, and a statement that does
+-- not get its lock is deferred with a warning while the migration is recorded as applied
+-- anyway. A plain CREATE INDEX on a table this size, on a sensor that is ingesting, would
+-- therefore queue an ACCESS EXCLUSIVE lock behind the live inserts, lose it after three
+-- seconds, and leave the index silently absent -- the API would still work, falling back to
+-- the 0.59 s scan, which is the kind of quiet degradation that is hard to notice.
+--
+-- The trade: a CONCURRENTLY build that fails leaves an INVALID index behind, and the
+-- IF NOT EXISTS below will then skip it forever. To check after applying:
+--
+--   SELECT i.indexrelid::regclass AS index, i.indisvalid
+--     FROM pg_index i
+--    WHERE i.indexrelid = 'idx_attack_patterns_rule_name'::regclass;
+--
+-- If `indisvalid` is false: DROP INDEX idx_attack_patterns_rule_name; and re-run.
+
+CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_attack_patterns_rule_name
+    ON attack_patterns (rule_name, created_at DESC);

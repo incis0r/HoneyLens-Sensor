@@ -1,0 +1,29 @@
+[Unit]
+# HoneyLens TTL / OS-fingerprint deception — an eBPF TC program that rewrites outbound TTL (and
+# related fields) so the host's OS fingerprint matches the emulated appliances instead of Linux.
+#
+# SYSTEM unit, NOT `systemctl --user`: loading an eBPF TC program needs root (CAP_BPF /
+# CAP_NET_ADMIN). Install into /etc/systemd/system/. The interface comes from the env file
+# (DECEPTION_INTERFACE, else INTERFACE); the loader aborts if the interface does not exist.
+# Needs a kernel with eBPF TC (Rocky 9's 5.14 is fine). Replaces the 0.9 `sensor-ttl-deception`.
+#
+# The paths point at the `sensor` service account, where the sensor tree belongs — not at an
+# operator's login account. They are explicit because a system unit's %h is root's home. Change
+# them if your service account is named differently; do not point them back at a login account.
+Description=HoneyLens TTL / OS-fingerprint deception (eBPF TC)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=root
+WorkingDirectory=/home/sensor/sensor-1.0
+EnvironmentFile=-/home/sensor/honeylens-state/.env
+Environment=PYTHONUNBUFFERED=1
+ExecStart=/home/sensor/sensor-1.0/.venv/bin/honeylens-ttl-deception
+Restart=on-failure
+RestartSec=15
+TimeoutStopSec=60
+
+[Install]
+WantedBy=multi-user.target

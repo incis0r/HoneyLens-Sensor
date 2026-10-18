@@ -1,0 +1,12 @@
+[Unit]
+Description=Ingest FortiGate decoy events every 30 seconds
+
+[Timer]
+# The decoy's log is truncated only after a successful commit, so a missed run costs
+# nothing but latency. 30s keeps the dashboard close to live without a daemon.
+OnBootSec=30s
+OnUnitActiveSec=30s
+AccuracySec=5s
+
+[Install]
+WantedBy=timers.target

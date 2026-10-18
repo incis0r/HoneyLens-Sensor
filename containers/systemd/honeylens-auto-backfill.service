@@ -1,0 +1,16 @@
+[Unit]
+Description=HoneyLens nightly reclassification backfill (runs only if the rules changed)
+After=network-online.target honeylens-db.service
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+WorkingDirectory=%h/sensor-1.0
+Environment=HONEYLENS_ENV_FILE=%h/honeylens-state/.env
+Environment=PYTHONUNBUFFERED=1
+# --apply: writing is opt-in (E1); the scheduled unit carries the write intent explicitly, so a
+# bare manual run reports only. Backfills only when the rule fingerprint actually changed.
+ExecStart=%h/sensor-1.0/.venv/bin/honeylens-auto-backfill --apply
+UMask=0077
+
+# Driven by honeylens-auto-backfill.timer — no [Install], the timer pulls it in.
