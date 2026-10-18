@@ -1,0 +1,100 @@
+# HoneyLens — Cisco AnyConnect / ASA tunnel-group enumeration
+# Created 2026-08-23. HoneyLens local-SID block 9026760-9026769. Alert-only
+# (HoneyLens sensors run IDS, not inline IPS).
+#
+# Campaign observed on sensor1 from 2026-08-08: unsolicited AnyConnect `auth-init`
+# POSTs to `/` on :8443, alternating-day bursts of ~25 000 events from 200-400 source
+# IPs. `<group-select>telecommuters</group-select>` — guessing tunnel-group names,
+# which is the step before a credential attack against the group that answers.
+#
+# The obvious rule does not work here, and that is the whole design problem:
+# the campaign arrives over TLS. Suricata sees the handshake, not the request. Of
+# 26 096 campaign events, 26 095 were HTTPS and the single cleartext one was our own
+# test. An `alert http` rule keyed on the XML body would fire on nothing at all.
+#
+# So rule 1 works at the TLS layer on the client's JA3, and rules 2-4 cover the
+# cleartext case, which is real but is not what we are seeing today: a Cisco ASA also
+# answers on plain HTTP, and a sensor placed inside a client network may see the same
+# probe unencrypted.
+#
+# No CVE is referenced. This is enumeration of a legitimate protocol, not exploitation
+# of a flaw, and naming a CVE that does not apply is worse than naming none — this
+# project has had to clean invented identifiers out of production data once already.
+
+# ---------------------------------------------------------------------------
+# 1. The kit's TLS fingerprint — the only rule that sees the observed traffic.
+#
+#    Measured on sensor1 over ~4 days of eve.json:
+#      * 78 060 client hellos carried this JA3, 78 059 of them to :8443
+#      * 648 distinct source IPs used it
+#      * of the 364 IPs we know are the campaign (they sent a config-auth body),
+#        363 used it — 99.7%
+#      * it is not shared with any ordinary traffic on the sensor; the next-largest
+#        hashes belong to our own outbound requests and to WebUI clients on :60443
+#
+#    The fingerprint therefore covers 648 sources where the request bodies could only
+#    ever show us 364 — most connections never complete a POST we get to log.
+#
+#    A JA3 identifies a TLS stack and its configuration, not a program, so another
+#    tool built on the same library could eventually share it. Left unbound by port
+#    on purpose: a fingerprint that only matches on the port we already watch adds
+#    nothing. If this ever turns noisy, the first tightening is `dest_port 8443`,
+#    not deleting the rule.
+#
+#    Requires JA3 fingerprinting. Suricata's `ja3-fingerprints: auto` enables it when
+#    a rule needs it, which this rule does; sensor1 is already producing the hashes.
+alert tls $EXTERNAL_NET any -> $HOME_NET any ( \
+    msg:"HONEYLENS Cisco AnyConnect enumeration kit TLS fingerprint (JA3)"; \
+    flow:to_server,established; \
+    ja3.hash; content:"11a384388ad36777e1a2e121495037fe"; \
+    classtype:attempted-recon; \
+    metadata:author HoneyLens, created_at 2026_08_23, \
+             attack_type VPN_RECON, confidence High; \
+    sid:9026760; rev:1;)
+
+# ---------------------------------------------------------------------------
+# 2. The AnyConnect handshake in cleartext. Anchored on the element AND its client
+#    attribute so the phrase alone cannot trigger it.
+alert http $EXTERNAL_NET any -> $HOME_NET any ( \
+    msg:"HONEYLENS Cisco AnyConnect auth-init over cleartext (VPN tunnel-group probe)"; \
+    flow:to_server,established; \
+    http.method; content:"POST"; \
+    http.request_body; content:"<config-auth"; nocase; \
+    pcre:"/<config-auth\b[^>]*\bclient\s*=\s*[\x22\x27]vpn[\x22\x27]/i"; \
+    classtype:attempted-recon; \
+    metadata:author HoneyLens, created_at 2026_08_23, \
+             attack_type VPN_RECON; \
+    sid:9026761; rev:1;)
+
+# ---------------------------------------------------------------------------
+# 3. The tell the operator did not think about.
+#
+#    AnyConnect reports the endpoint's own MAC. This kit generates six random bytes
+#    and never masks bit 0 of the first octet — the multicast bit — so about half its
+#    clients announce an address no physical NIC can carry. Measured 188 of 380 =
+#    49.5% on live traffic, which is exactly what unmasked random bytes predict.
+#
+#    In hex, that bit is the low bit of the second digit: odd means multicast.
+alert http $EXTERNAL_NET any -> $HOME_NET any ( \
+    msg:"HONEYLENS Cisco AnyConnect client reports an impossible MAC (multicast bit set)"; \
+    flow:to_server,established; \
+    http.request_body; content:"<mac-address"; nocase; \
+    pcre:"/<mac-address\b[^>]*>\s*[0-9a-f][13579bdf](?:[:-][0-9a-f]{2}){5}\s*</i"; \
+    classtype:trojan-activity; \
+    metadata:author HoneyLens, created_at 2026_08_23, \
+             attack_type VPN_RECON, confidence High; \
+    sid:9026762; rev:1;)
+
+# ---------------------------------------------------------------------------
+# 4. One pinned 2018 client build across every source IP. Cisco's supported client is
+#    "Cisco Secure Client 5.x", so the version range is bounded to 3.x/4.x and 5.x
+#    never matches — a real endpoint on a client network must not be alerted on.
+alert http $EXTERNAL_NET any -> $HOME_NET any ( \
+    msg:"HONEYLENS End-of-life Cisco AnyConnect client User-Agent (3.x/4.x)"; \
+    flow:to_server,established; \
+    http.user_agent; content:"AnyConnect"; nocase; \
+    pcre:"/\bAnyConnect\b(?:\s+\w+)?\s+[34]\.\d+\.\d+/i"; \
+    classtype:attempted-recon; \
+    metadata:author HoneyLens, created_at 2026_08_23, \
+             attack_type VPN_RECON; \
+    sid:9026763; rev:1;)

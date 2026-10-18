@@ -1,0 +1,145 @@
+# HoneyLens — WAGO PFC200 Web-Based Management (Idea 54)
+# Created 2026-08-14. HoneyLens local-SID block 9026750-9026759. Alert-only
+# (HoneyLens sensors run IDS, not inline IPS).
+#
+# Companion to honeypots/wago/signatures.py. The honeypot sees parsed form fields and
+# per-source history and is the higher-fidelity detector; these rules cover what it
+# cannot: traffic to a WAGO that is not our decoy (a real controller on the same
+# segment), and requests that never complete against our listener.
+#
+# CVE identifiers below were verified PUBLISHED against CIRCL Vulnerability-Lookup on
+# 2026-08-14 before being written here. Shapes without a confirmed advisory carry no
+# CVE reference — this project has had to clean invented identifiers out of production
+# data once, and a rule that names the request shape and is right beats one that names
+# a CVE and is wrong.
+#
+# Deliberately NOT written, and why:
+#   * CVE-2023-1620 (crafted packet to the CODESYS V2 runtime, TCP/2455) — the traffic
+#     is not HTTP and we run no responder there, so a rule would fire on nothing.
+#   * CVE-2023-1619 ("malformed packet", authenticated) — no observable shape without
+#     guessing.
+#   * CVE-2020-12516 — affects the 750-88x/750-352 family, not the 750-8202 identity.
+
+# 1. WBM reconnaissance. Low value alone, and the sweep is what matters — the honeypot
+#    counts distinct pages per source; here we only mark that the surface was touched.
+alert http $EXTERNAL_NET any -> $HOME_NET any ( \
+    msg:"HONEYLENS WAGO WBM page access (PFC controller management surface)"; \
+    flow:to_server,established; \
+    http.uri; content:"/wbm/"; startswith; \
+    pcre:"/^\/wbm\/(?:state|rts_info|tcpip|ethernet|port|snmp|modbus|mass_storage|administration)\.(?:php|ssi)/"; \
+    classtype:attempted-recon; \
+    metadata:author HoneyLens, created_at 2026_08_14, idea IDEA_54, \
+             attack_type WAGO_RECON; \
+    sid:9026750; rev:1;)
+
+# 2. I/O map retrieval. On a real plant this is the file an attacker reads before
+#    touching a process — it names the modules and channels.
+alert http $EXTERNAL_NET any -> $HOME_NET any ( \
+    msg:"HONEYLENS WAGO I/O configuration retrieval (process map disclosure)"; \
+    flow:to_server,established; \
+    http.uri; content:"/wbm/io_config.xml"; nocase; \
+    classtype:web-application-attack; \
+    metadata:author HoneyLens, created_at 2026_08_14, idea IDEA_54, \
+             attack_type WAGO_IO_DISCLOSURE; \
+    sid:9026751; rev:1;)
+
+# 3. Controller state command. STOP and RESET are the destructive pair; RUN restores
+#    service and is not matched.
+alert http $EXTERNAL_NET any -> $HOME_NET any ( \
+    msg:"HONEYLENS WAGO PLC stop/reset command via WBM"; \
+    flow:to_server,established; \
+    http.method; content:"POST"; \
+    http.request_body; content:"plc-action="; nocase; \
+    pcre:"/plc-action=(?:stop|reset)/i"; \
+    classtype:attempted-dos; \
+    metadata:author HoneyLens, created_at 2026_08_14, idea IDEA_54, \
+             attack_type WAGO_CONTROL_WRITE; \
+    sid:9026752; rev:1;)
+
+# 4. Process write through WebVisu — pump, setpoint, valve. This is someone changing
+#    what the plant is doing, which is why it is separated from configuration writes.
+alert http $EXTERNAL_NET any -> $HOME_NET any ( \
+    msg:"HONEYLENS WAGO WebVisu process write (pump/setpoint/valve)"; \
+    flow:to_server,established; \
+    http.method; content:"POST"; \
+    http.request_body; content:"form-name=process_control"; nocase; \
+    classtype:attempted-user; \
+    metadata:author HoneyLens, created_at 2026_08_14, idea IDEA_54, \
+             attack_type WAGO_CONTROL_WRITE; \
+    sid:9026753; rev:1;)
+
+# 5. Vendor default credentials. A source using these knows what it is talking to,
+#    which is a stronger signal than a dictionary run.
+alert http $EXTERNAL_NET any -> $HOME_NET any ( \
+    msg:"HONEYLENS WAGO WBM default credentials submitted"; \
+    flow:to_server,established; \
+    http.request_body; content:"username=admin"; nocase; \
+    pcre:"/username=admin&password=(?:wago|admin)(?:&|$)/i"; \
+    classtype:attempted-admin; \
+    metadata:author HoneyLens, created_at 2026_08_14, idea IDEA_54, \
+             attack_type WAGO_CREDENTIAL_CAPTURE; \
+    sid:9026754; rev:1;)
+
+# 6. CVE-2023-1698 (CVSS 9.8) — unauthenticated user creation / configuration change.
+#    Matched on the account-administration shape rather than on "no authentication",
+#    which is not observable on the wire.
+alert http $EXTERNAL_NET any -> $HOME_NET any ( \
+    msg:"HONEYLENS WAGO CVE-2023-1698 unauthenticated user creation attempt"; \
+    flow:to_server,established; \
+    http.method; content:"POST"; \
+    http.uri; content:"/wbm/"; startswith; \
+    http.request_body; pcre:"/(?:new-user|newuser|add-user|user-add|user-role|new-password)=/i"; \
+    classtype:web-application-attack; \
+    reference:cve,2023-1698; \
+    metadata:author HoneyLens, created_at 2026_08_14, idea IDEA_54, \
+             attack_type WAGO_EXPLOIT_ATTEMPT, cve CVE_2023_1698; \
+    sid:9026755; rev:1;)
+
+# 7. CVE-2023-4089 (CVSS 2.7) — undocumented local file inclusion. The advisory needs
+#    administrative privileges; the attempt is still worth naming.
+alert http $EXTERNAL_NET any -> $HOME_NET any ( \
+    msg:"HONEYLENS WAGO CVE-2023-4089 file inclusion / traversal against WBM"; \
+    flow:to_server,established; \
+    http.uri; content:"/wbm/"; \
+    pcre:"/(?:\.\.[\/\\\\]){2,}|%2e%2e[\/\\\\]|\/etc\/(?:passwd|shadow)/i"; \
+    classtype:web-application-attack; \
+    reference:cve,2023-4089; \
+    metadata:author HoneyLens, created_at 2026_08_14, idea IDEA_54, \
+             attack_type WAGO_EXPLOIT_ATTEMPT, cve CVE_2023_4089; \
+    sid:9026756; rev:1;)
+
+# 8. Oversized WBM parameter — a buffer probe. The fields it targets (hostname,
+#    addresses) are short by nature on a real device, so length alone is the signal.
+alert http $EXTERNAL_NET any -> $HOME_NET any ( \
+    msg:"HONEYLENS WAGO oversized WBM parameter (buffer probe)"; \
+    flow:to_server,established; \
+    http.method; content:"POST"; \
+    http.uri; content:"/wbm/"; startswith; \
+    http.request_body; pcre:"/(?:hostname|ip-address|gateway|subnet-mask)=[^&]{512,}/i"; \
+    classtype:attempted-admin; \
+    metadata:author HoneyLens, created_at 2026_08_14, idea IDEA_54, \
+             attack_type WAGO_EXPLOIT_ATTEMPT; \
+    sid:9026757; rev:1;)
+
+# 9. Shell metacharacters in a WBM configuration field.
+alert http $EXTERNAL_NET any -> $HOME_NET any ( \
+    msg:"HONEYLENS WAGO command injection attempt in WBM configuration field"; \
+    flow:to_server,established; \
+    http.method; content:"POST"; \
+    http.uri; content:"/wbm/"; startswith; \
+    http.request_body; pcre:"/(?:hostname|ip-address|gateway|subnet-mask)=[^&]*[\;|`][^&]*(?:cat|wget|curl|nc|sh|busybox|chmod|tftp)\b/i"; \
+    classtype:web-application-attack; \
+    metadata:author HoneyLens, created_at 2026_08_14, idea IDEA_54, \
+             attack_type WAGO_EXPLOIT_ATTEMPT; \
+    sid:9026758; rev:1;)
+
+# 10. Firmware package upload to the WBM package server.
+alert http $EXTERNAL_NET any -> $HOME_NET any ( \
+    msg:"HONEYLENS WAGO firmware package upload attempt"; \
+    flow:to_server,established; \
+    http.method; content:"POST"; \
+    http.uri; content:"/wbm/firmware_update.php"; nocase; \
+    classtype:web-application-attack; \
+    metadata:author HoneyLens, created_at 2026_08_14, idea IDEA_54, \
+             attack_type WAGO_FIRMWARE_UPLOAD; \
+    sid:9026759; rev:1;)

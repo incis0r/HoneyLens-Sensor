@@ -1,0 +1,18 @@
+[Unit]
+Description=HoneyLens hunting queue and automatic attacker profiler
+After=network-online.target honeylens-db.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory=%h/sensor-1.0
+Environment=HONEYLENS_ENV_FILE=%h/honeylens-state/.env
+Environment=PYTHONUNBUFFERED=1
+ExecStart=%h/sensor-1.0/.venv/bin/honeylens-profiler
+Restart=on-failure
+RestartSec=15
+TimeoutStopSec=180
+UMask=0077
+
+[Install]
+WantedBy=default.target

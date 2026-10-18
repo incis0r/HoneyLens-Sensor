@@ -1,0 +1,152 @@
+# Fake-vendor WAF canary (AI-triage tripwire)
+
+A passive deception header that detects when a client — notably an **LLM triage agent** on
+the attacker side — parses a honeypot response and acts on it. Implemented in
+[`src/honeylens/honeypots/deception_waf.py`](../src/honeylens/honeypots/deception_waf.py);
+wired into **every web decoy** on a sensor — SharePoint, NetScaler, FortiGate, PAN-OS
+(management + captive portal) and K8s — so the host presents one consistent WAF across all
+its surfaces. aiohttp decoys use the `on_response_prepare` hook; the K8s raw-socket server
+uses `apply_raw` to splice the header into its serialized response.
+
+Status: **OFF by default.** Enable per host, like TTL deception. Each host derives one
+consistent invented vendor from its `SENSOR_HOSTNAME`, so a leaked/echoed header name
+attributes back to exactly one sensor.
+
+> ### Deployment status — measured 2026-10-27: enabled on every sensor
+>
+> Every sensor in the fleet serves the header, and it was verified **on the wire** rather than
+> from the flag: a request to each web decoy's own port returns one
+> `X-<Vendor>-<DDMMYYYY>: mode=block; id=<8 hex>` line, the same vendor and nonce across all of
+> that host's surfaces, and a different vendor on every host. The host-side classifier was
+> checked the other way round on each sensor — it recognises that host's own token when it is
+> reflected back in a request.
+>
+> **A `.env` grep is the wrong check and says "off" when it is on.** The flag reaches the decoys
+> as `Environment=` lines in the `hp-*.container` quadlets, not through the sensor's `.env`
+> (the decoy containers never read one). Two separate reviews concluded "not enabled anywhere"
+> from a `.env` grep while the canary was live; read the quadlet, or ask the port.
+>
+> **Pin the vendor even when the derived name is the one you want.** The built-in pool grew from
+> five names to eight, and `vendor_for_host` is a hash modulo the pool size — so two hosts that
+> had no `WAF_CANARY_VENDOR` silently changed identity on their next restart. A pin is the only
+> thing that holds a host's name across a pool change, and it costs nothing when it names the
+> value the host already serves.
+>
+> **Keep the generation environment on the host.** `WAF_CANARY_ENABLED`/`SALT`/`VENDOR` live in a
+> `0600` `waf-canary.env` in each sensor's state directory, because
+> `honeylens-hp --quadlets` re-emits the canary only when those variables are in its environment —
+> a regen without them drops the canary and nothing says so.
+>
+> Zero callbacks from a tripwire that is switched **off** is not evidence of anything; now that
+> every sensor is serving, a zero is a measurement. The red line stands: passive only, no
+> prompt-injection, no hack-back (§[Boundaries](#boundaries-what-it-is-not)).
+
+## What it does
+
+When enabled, every honeypot response carries a plausible-but-fictional WAF/appliance
+header, e.g.:
+
+```
+X-Xilsoft-WAF-22092026: mode=block; id=9f3a1c7d
+```
+
+- **Vendor identity is per host and deterministic** — by default drawn from a built-in pool of
+  invented names (`Xilsoft-WAF`, `CamaraSecWAF`, `SilentEdge-FW`, `AppSecGW`, `NimmoProxy`,
+  `Vanadium-WAF`, `Kestrelix-FW`, `Orbinox-Shield`). A leaked or echoed header name therefore
+  attributes back to exactly one sensor.
+  > ⚠️ **These are EXAMPLE names, and they are published here — so treat them as defaults to
+  > replace, not as secrets.** Pick your own invented vendor per sensor and pin it with
+  > `WAF_CANARY_VENDOR` (see [Enable](#enable)). The camouflage works either way, but the
+  > *canary* half of the design assumes the string cannot be known in advance: a reflected
+  > name that appears in this repository is weak evidence, while a reflected name you made up
+  > locally has no innocent explanation at all. Pinning also guarantees a **unique** vendor per
+  > sensor, which the hash-from-hostname default cannot (two hosts can collide).
+- **Header name** is `X-<Vendor>-<DDMMYYYY>`, where the date is a stable per-host "ruleset
+  release" (not today's date — the name must not rotate).
+- **Header value** carries an opaque per-attacker-IP/day **nonce** (`id=`).
+
+## Why fictional vendors
+
+Real on-prem apps sit behind WAFs that inject vendor headers, so a WAF header is camouflage,
+not a honeypot tell. Inventing the vendor does two jobs:
+
+1. **Attribution canary.** These strings never legitimately appear in an inbound request.
+   If the vendor token (or the nonce) comes back to us, a client read our response and
+   reflected it — tagged `sp-waf-canary-callback` (HIGH).
+2. **Generative-tooling trap.** A human who researches "Xilsoft WAF" finds nothing and
+   moves on. An LLM asked to "bypass the Xilsoft WAF" often fabricates vendor-specific
+   techniques for a product that does not exist; those confabulated requests come back to us.
+
+## Boundaries (what it is NOT)
+
+- **Passive only.** The header never instructs the caller to do anything. It is not
+  prompt-injection and not a hack-back — we never try to drive the adversary's agent.
+- **No infrastructure in the payload.** The nonce is an opaque HMAC; no IPs/hostnames of
+  ours appear in the header.
+- **No real vendor impersonation.** Names are deliberately invented so every hit is ours,
+  and we do not copy a real security product's header format.
+
+## Enable
+
+Containerized web decoys run from podman quadlets generated by the manifest, so enable is
+done at **unit-generation time**: set the flag + salt in the environment when regenerating the
+`hp-*.container` units, then reload + restart. The five web decoys are flagged `waf_canary` in
+`honeylens.honeypots.manifest`; the generator (`cli.quadlet`) then always pins
+`SENSOR_HOSTNAME` (so each decoy's container — whose own hostname is the container id — derives
+the SAME host vendor) and, when enabled, emits the flag + salt:
+
+```
+export SENSOR_HOSTNAME=$(hostname)     # or the sensor's canonical name
+export WAF_CANARY_ENABLED=true
+export WAF_CANARY_SALT=$(openssl rand -hex 16)   # persist it; empty = nonce keyed on host
+export WAF_CANARY_VENDOR='Acmeguard-WAF'         # YOUR invented name — see below
+honeylens-hp --quadlets ~/.config/containers/systemd   # regenerate units
+systemctl --user daemon-reload && systemctl --user restart hp-sharepoint hp-netscaler hp-fortigate hp-paloalto hp-k8s
+```
+
+**Choose your own `WAF_CANARY_VENDOR` per sensor.** The built-in pool is example data published
+with this repository; a name you invent locally is what makes a reflected token unambiguous
+evidence. Any string works — it is also folded into the callback-detection tokens, so a pinned
+name outside the pool is still recognised when it comes back. Make it look like a real appliance
+brand (`<Word>-WAF`, `<Word>-FW`, `<Word>-Shield`), keep it out of public writing, and give each
+sensor a different one. Left unset, the vendor is derived from `SENSOR_HOSTNAME` and **two hosts
+can land on the same name**.
+
+Keep `WAF_CANARY_ENABLED`/`WAF_CANARY_SALT`/`WAF_CANARY_VENDOR` in the host's persistent
+generation environment so a later regeneration re-emits them (otherwise a regen silently drops
+the canary). The fleet keeps them in `<state-dir>/waf-canary.env`, mode `0600` and owned by the
+service account — `set -a; . <state-dir>/waf-canary.env; set +a` before the regen command. OFF unless set: a honeypot with no `WAF_CANARY_ENABLED` in its container env uses
+the `config` default (False). The header rides on **every** response (a WAF that fronted only one
+page would be a tell), so keep it off for golden-corpus captures.
+
+**Heterogeneous hosts / host-specific unit env.** `honeylens-hp --quadlets` rewrites **every**
+unit with one `--image-tag` and only the env the current manifest knows. On a host whose running
+units carry per-host env the manifest does not reproduce — e.g. real-IP-behind-a-proxy vars
+(`HONEYLENS_PROXY_PROTOCOL`/`HONEYLENS_HTTP_PROXY`) — or a mix of per-decoy image tags, a blind
+full regen would **drop that env and retag unrelated honeypots**. There, enable the canary
+**surgically**: rebuild only the five web-decoy images from HEAD at a dedicated tag, then add the
+three canary `Environment=` lines (`SENSOR_HOSTNAME`, `WAF_CANARY_ENABLED`, `WAF_CANARY_SALT`) to
+those five units' existing env and point their `Image=` at the new tag — leaving every other unit
+and all host-specific env untouched. Diff each unit before swapping it in.
+
+## Detect
+
+- `sp-waf-canary-callback` (HIGH) — a request reflected one of our fake-vendor tokens.
+  Correlate with the source's User-Agent to tell apart a human, a scanner (`nuclei`,
+  `python-requests`), and an LLM fetcher; correlate with `sp-viewstate-forged-honeytoken` to
+  see whether the same operator proceeds to stage two.
+
+## Follow-ups
+
+- ~~Extend the header injection to the NetScaler / FortiGate / PaloAlto / K8s web decoys~~ —
+  **done** (2026-10-10): all web decoys share `deception_waf.on_response_prepare` /
+  `apply_raw`, one consistent WAF per host.
+- ~~Catch a reflected token wherever it lands~~ — **done** (2026-10-10): callback detection
+  moved into the **central classifier** (`classify_event_row`), which runs `is_canary_callback`
+  on every ingested payload before the protocol gates and tags `waf-canary-callback` (high) for
+  **any** source, not just SharePoint. (The SharePoint decoy keeps its own real-time
+  `sp-waf-canary-callback` behaviour tag for the in-honeypot response path.) The canary tag is
+  **added, not substituted**, so a request that both reflects a token and carries a real exploit
+  keeps its exploit classification — no detection short-circuit.
+- An analyst-review heuristic for "bypass attempt against a non-existent vendor" (the
+  generative-tooling tell) — kept out of the automatic classifier for now to avoid noise.
