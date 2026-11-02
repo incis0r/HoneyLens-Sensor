@@ -111,7 +111,7 @@ propcache==0.5.4
     #   yarl
 psycopg2-binary==2.9.13
     # via -r requirements.in
-pyasn1==0.6.4
+pyasn1==0.6.5
     # via ldap3
 pycparser==3.0
     # via cffi
@@ -162,7 +162,7 @@ typing-inspection==0.4.4
     #   pydantic
 urllib3==2.8.0
     # via requests
-uvicorn==0.53.0
+uvicorn[standard]==0.53.0
     # via -r requirements.in
 uvloop==0.22.1
     # via uvicorn
